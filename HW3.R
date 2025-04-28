@@ -1,0 +1,299 @@
+install.packages('rmarkdown')
+---
+title: "Homework 3"
+author: "CHAO HUNG"
+date: "2025.4.28"
+output: html_document
+---
+
+## Load the necessary packages. 
+install.packages("rpart.plot", "gridExtra")
+library(ISLR)
+library(rpart)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(rpart.plot)
+library(caret)
+
+
+## Starting Question 1: Poly and Tree Model
+## Loading the data. 
+data(Credit)
+
+## Setting seed and performing a 75-25 train-test split on the data. 
+## Then check the data splitting using dim().
+set.seed(123)
+sample <- sample(
+  c(T, F), 
+  length(Credit$Rating), 
+  replace = T, 
+  prob = c(0.75, 0.25)
+  )
+
+training <- Credit[sample, ]
+testing <- Credit[!sample, ]
+
+dim(training)
+dim(testing)
+
+## Check for NA first.
+sum(is.na(Credit$Rating)) ## No NA values.
+
+## Now fit a polynomial regression model, using Rating as Y, an orthogonal transformed
+## Income with up to 5 degrees as X, as well as Age, Education, Balance 
+## as control variables. 
+poly.fit1 <- lm(
+  Rating ~ poly(Income, 5, raw = F) + Age + Education + Balance,
+  data = training
+  )
+
+## As the result shows, Income only exhibits significance at the 1st order, 
+## while also showing some significance at the 5th degree. 
+
+## With the 2nd, 3rd and 4th degree of Income all show no significance, 
+## this indicate that the relationship between Rating and Income could largely 
+## be explained by the 1st order of Income, meaning that the relationship 
+## between Rating and Income is very much linear. 
+summary(poly.fit1)
+
+## Plotting the result using ggplot(). 
+ggplot(training, aes(Income, Rating)) +
+  geom_point(alpha = 0.2) +
+  labs(title = "Relationship between Rating and Income") +
+  stat_smooth(method = lm, formula = y ~ poly(x, 5, raw = F), col = "blue")
+
+## Fit a tree model using the same features. 
+tree.fit1 <- rpart(
+  Rating ~ Income + Age + Education + Balance, data = training
+  )
+set.seed(123)
+
+## Take a look at the model output. The threshold value for Income that splits 
+## the 6th and 7th nodes is 57.6815, where samples that are smaller than 57.6815
+## is split to the 6th node, equal to or larger than 57.6815, node 7th. 
+tree.fit1  
+
+## Take a look at the CP table of the model. The minimum number of splits to 
+## obtain an error rate smaller than the cross-validation error rate is 2, 
+## where it has the lowest CV error rate. 
+tree.fit1$cptable
+
+CPtable <- as.data.frame(tree.fit1$cptable)
+CPtable$nsplit[CPtable$"rel error" + CPtable$"xstd" < CPtable$"xerror"][1]
+
+## Plot the tree model CP and mark the number of trees with the lowest error 
+## rate. 
+plotcp(tree.fit1)
+abline(v = 2, lty = "dashed", col = "red")
+
+## Make predictions using both models and compare the RMSE and R2.
+poly.pred <- poly.fit1 %>% predict(testing)
+tree.pred <- tree.fit1 %>% predict(testing)
+
+comparison <- data.frame(
+  model = c("Tree Regression", "Polynomial Regression"),
+  RMSE = c(RMSE(tree.pred, testing$Rating), RMSE(poly.pred, testing$Rating)),
+  R2 = c(R2(tree.pred, testing$Rating), R2(poly.pred, testing$Rating))
+)
+
+## By this table, I prefer the Poly model, for it has a smaller RMSE and a 
+## better model performance based on its R squared value. 
+library(gridExtra)
+grid.table(comparison)
+
+## Starting Question 2: SVM
+## Load Social_Network_Ads data using the code provided in the assignment. 
+Social_Network_Ads <- read.csv(
+  "https://www.dropbox.com/s/11rmse4ay9uu8vu/Social_Network_Ads.csv?dl=1"
+  )
+
+## Subsetting the data by Age, EstimatedSalary, and Purchased. 
+subset_SNA <- Social_Network_Ads[, c("Age", "EstimatedSalary", "Purchased")]
+
+## Convert Purchased as factor variable using as.factor(), then check its class 
+## using class().
+subset_SNA$Purchased <- as.factor(subset_SNA$Purchased)
+class(subset_SNA$Purchased)
+
+## Setting seed to 123 and perform a 75-25 train-test split using 
+## createDataPartition() on Purchased. Then check the data splitting using 
+## dim().
+set.seed(123)
+sample <- createDataPartition(subset_SNA$Purchased, p = 0.75, list = F)
+training <- subset_SNA[sample, ]
+testing <- subset_SNA[-sample, ]
+
+dim(training)
+dim(testing)
+
+## Check for NAs. 
+sum(is.na(training))
+
+## Now fit an SVM on training data, while Purchased as outcome and Age, 
+## EstimatedSalary as explanatory variables. 
+library(e1071) ## For us to use svm()
+
+svm.fit1 <- svm(
+  Purchased ~ Age + EstimatedSalary,
+  scale = T,
+  type = "C-classification",
+  kernel = "linear",
+  data = training
+  )
+
+## There are 116 support vectors in the model. 
+svm.fit1
+
+## Now we predict on the testing data using the SVM model.
+svm.pred <- predict(svm.fit1, testing)
+
+## Generating confusion matrix, show the prediction accuracy. The prediction 
+## accuracy is 83.26263%. 
+confmat.svm1 <- table(
+  Predicted = svm.pred,
+  Actual = testing$Purchased
+)
+confmat.svm1 ## confusion matrix
+
+(confmat.svm1[1, 1] + confmat.svm1[2, 2] / sum(confmat.svm1) * 100) ## 83%
+
+## Plotting the SVM model.
+plot(
+  svm.fit1,
+  subset_SNA,
+  col = c("slategray1", "paleturquoise4"),
+)
+
+## Hyperparameter tuning using the above SVM. 
+svm.fit.tuned <- tune.svm(
+  Purchased ~ Age + EstimatedSalary,
+  type = "C-classification",
+  kernel = "polynomial",
+  gamma = seq(1, 2, 0.1), ## 3 different gamma values
+  cost = seq(1, 4, 0.2), ## 3 different cost(C) values
+  tunecontrol = tune.control(cross = 5),
+  data = training
+)
+
+## There are 176 unique combinations of hyperparameters (1, 1), (1.1, 1)......
+## (2, 4) that I need to tune over. 
+length(seq(1, 2, 0.1)) * length(seq(1, 4, 0.2)) ## = 176. 
+
+## The best model is the 3rd degree SVM with Cost = 1, gamma = 1.2. 
+## It has 116 support vectors. 
+svm.fit.tuned$best.model ## Optimal degree is 3. 
+min(svm.fit.tuned$performances$error) ## Lowest CV error is 0.1296175.
+svm.fit.tuned$best.parameters$cost ## Optimal C is 1.
+svm.fit.tuned$best.parameters$gamma ## Optimal gamma is 1.2. 
+
+## Showing all possible C and gamma values under the same CV error. 
+svm.fit.tuned$performances[
+  (svm.fit.tuned$performances$error == min(svm.fit.tuned$performances$error)), 
+  ]
+
+plot(
+  svm.fit.tuned$best.model,
+  subset_SNA,
+  col = c("slategray1", "paleturquoise4"),
+)
+## I get different results every time I refit the tuned SVM, why?
+
+## Starting Question 3: LASSO Regression 
+## Load the necessary packages and "Hitters" data. 
+install.packages("glmnet", "plotmo")
+library(ISLR)
+library(glmnet)
+library(plotmo)
+
+data(Hitters)
+
+## Removing NAs using na.omit(). 
+dim(Hitters) ## Check how many rows and columns Hitters has. 
+sum(is.na(Hitters)) ## How many rows in Hitters that contain NAs? 59. 
+Hitters <- na.omit(Hitters)
+
+## Generate a matrix, in which Salary is Y, the rest of the variables are X. 
+X = model.matrix(Salary ~ .-1, data = Hitters) 
+Y = Hitters$Salary
+
+## Fit a LASSO model using glmnet().
+set.seed(100)
+lasso.fit <- glmnet(X, Y, alpha = 1)
+print(lasso.fit)
+
+## Getting the best lambda value lambda.1se, which is not the lambda that 
+## produces minimum mean CV error (lambda.min), but the largest lambda value 
+## that is the error is within 1 s.e. of the CV error of lambda.min. 
+cv.glmnet(X, Y)$lambda.1se ## 63.23532. 
+
+## At this optimized lambda, we see that we have only 5 variables left, ranging
+## them from their beta magnitude is: 
+## Walks: at 1.39817511;
+## Hits: at 1.29269756;
+## CRBI: at 0.32192558
+## CRuns: at 0.14167760;
+## PutOuts: at 0.04675463.
+coef(lasso.fit, s = cv.glmnet(X, Y)$lambda.1se)
+
+## Plot using plot_glmnet(). In the charts, we see that as penalty (lambda)
+## increases, the magnitude of most estimated coefficients (beta) decreases, 
+## so that the number of X variables that still have non-zero beta also drops.
+## Meaning that as lambda increases, DF drops. 
+
+## As LASSO suggests, the variable whose beta is the last one to become 0 
+## contributes to the outcome the most. In this case, it is "Hits" who
+## is the most important of all. 
+par(mfrow = c(1, 2))
+
+plot_glmnet(
+  lasso.fit, xvar = "lambda",
+  label = 5,
+  xlab = expression(paste("log(", lambda, ")")),
+  ylab = expression(beta)
+  )
+## Draw a line for the optimized lambda. 
+abline(v = log(cv.glmnet(X, Y)$lambda.1se), lty = "dashed", col = "red")
+
+plot_glmnet(
+  lasso.fit,
+  label = 5,
+  xlab = expression(paste("log(", lambda, ")")),
+  ylab = expression(beta)
+)
+## Draw a line for the optimized lambda. 
+abline(v = log(cv.glmnet(X, Y)$lambda.1se), lty = "dashed", col = "red")
+
+## Now we calculate the difference between lambda.min and lambda.1se. 
+## According to the authors of the package, using lambda.1se as the optimized 
+## lambda value produces the the most parsimonious list of features, which is 
+## the simplest model, while its accuracy is also comparable with choosing
+## lambda.min as optimized lambda. 
+cv.glmnet(X, Y)$lambda.min - cv.glmnet(X, Y)$lambda.1se ## -67 at first run.
+
+## When log(lambda) = 0......? log(lambda) = 0, means that lambda = 1. We can 
+## set the lambda value to 1 in our model.
+
+## After setting lambda to 1, the first 5 variables becomes:
+## Hits: at 6.771856e+00;
+## Years: at -7.706032e+00;
+## NewLeagN: at -1.015361e+01;
+## LeagueA: at -4.653101e+01;
+## DivisinW: at -1.167282e+02.
+lasso.fit1 <- glmnet(X, Y, lambda = 1)
+
+plot_glmnet(
+  lasso.fit1, xvar = "lambda",
+  label = 5,
+  xlab = expression(paste("log(", lambda, ")")),
+  ylab = expression(beta)
+)
+
+plot_glmnet(
+  lasso.fit1,
+  label = 5,
+  xlab = expression(paste("log(", lambda, ")")),
+  ylab = expression(beta)
+)
+
+rmarkdown::
